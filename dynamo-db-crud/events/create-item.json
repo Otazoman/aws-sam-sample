@@ -1,0 +1,14 @@
+{
+    "httpMethod": "POST",
+    "path": "/items",
+    "headers": {
+        "Content-Type": "application/json"
+    },
+    "body": "{\"name\": \"Test Item\", \"description\": \"This is a test item for local development\"}",
+    "queryStringParameters": null,
+    "pathParameters": null,
+    "requestContext": {
+        "httpMethod": "POST",
+        "path": "/items"
+    }
+}

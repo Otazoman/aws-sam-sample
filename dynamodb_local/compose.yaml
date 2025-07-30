@@ -1,0 +1,46 @@
+services:
+  # DynamoDB Local is a client-side database that supports the complete DynamoDB API, but doesn't manipulate any tables or data in DynamoDB itself.
+  dynamodb:
+    image: amazon/dynamodb-local
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./dbdata:/data
+    command: "-jar DynamoDBLocal.jar -sharedDb -dbPath /data"
+    networks:
+      - sam-test-network
+    restart: always
+
+  # DynamoDB Admin is a web-based UI for DynamoDB Local.
+  dynamodb-admin:
+    image: aaronshaf/dynamodb-admin
+    environment:
+      - DYNAMO_ENDPOINT=http://dynamodb:8000
+    depends_on:
+      - dynamodb
+    networks:
+      - sam-test-network
+    restart: always
+
+  https-portal:
+    image: steveltn/https-portal:latest
+    container_name: web_https-portal
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./certs:/var/lib/https-portal
+    environment:
+      STAGE: 'local'
+      DOMAINS: "dev-ubuntu.tohonokai.com-> http://dynamodb-admin:8001"
+      WORKER_PROCESSES: auto
+      WORKER_CONNECTIONS: 2048
+      CLIENT_MAX_BODY_SIZE: '128M'
+    depends_on:
+      - dynamodb-admin
+    networks:
+      - sam-test-network
+    restart: always
+
+networks:
+  sam-test-network:

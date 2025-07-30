@@ -1,0 +1,246 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  DynamoDB CRUD API with separate Lambda functions and API Gateway
+
+Conditions:
+  IsDevEnvironment: !Equals [!Ref Environment, "dev"]
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 128
+    Runtime: python3.13
+    Layers:
+      - !Ref CommonLayer
+    Environment:
+      Variables:
+        TABLE_NAME: !FindInMap [EnvironmentMap, !Ref Environment, TableName]
+        STAGE: !Ref Environment
+        DYNAMODB_ENDPOINT_URL: !If
+          - IsDevEnvironment
+          - "http://dynamodb:8000"
+          - !Ref AWS::NoValue
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - stg
+      - prd
+    Description: Environment to deploy the stack (dev, stg, prd)
+
+Mappings:
+  EnvironmentMap:
+    dev:
+      TableName: "local-items-dev"
+    stg:
+      TableName: "dynamodb-crud-items-stg"
+    prd:
+      TableName: "dynamodb-crud-items-prd"
+
+Resources:
+  # Common Layer for shared utilities
+  CommonLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: !Sub "${AWS::StackName}-common-layer"
+      Description: Common utilities for DynamoDB CRUD operations
+      ContentUri: layers/common-layer/
+      CompatibleRuntimes:
+        - python3.13
+      RetentionPolicy: Retain
+
+  # DynamoDB Table
+  ItemsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !FindInMap [EnvironmentMap, !Ref Environment, TableName]
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+  # Create Item Lambda Function
+  CreateItemFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/create/
+      Handler: app.lambda_handler
+      Runtime: python3.13
+      Environment:
+        Variables:
+          TABLE_NAME: !FindInMap [EnvironmentMap, !Ref Environment, TableName]
+          STAGE: !Ref Environment
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !FindInMap [EnvironmentMap, !Ref Environment, TableName]
+      Events:
+        CreateItem:
+          Type: Api
+          Properties:
+            Path: /items
+            Method: post
+            RestApiId: !Ref CrudApi
+
+  # Read Items Lambda Function
+  ReadItemsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/read/
+      Handler: app.lambda_handler
+      Runtime: python3.13
+      Environment:
+        Variables:
+          TABLE_NAME: !FindInMap [EnvironmentMap, !Ref Environment, TableName]
+          STAGE: !Ref Environment
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !FindInMap [EnvironmentMap, !Ref Environment, TableName]
+      Events:
+        GetAllItems:
+          Type: Api
+          Properties:
+            Path: /items
+            Method: get
+            RestApiId: !Ref CrudApi
+        GetItem:
+          Type: Api
+          Properties:
+            Path: /items/{id}
+            Method: get
+            RestApiId: !Ref CrudApi
+
+  # Update Item Lambda Function
+  UpdateItemFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/update/
+      Handler: app.lambda_handler
+      Runtime: python3.13
+      Environment:
+        Variables:
+          TABLE_NAME: !FindInMap [EnvironmentMap, !Ref Environment, TableName]
+          STAGE: !Ref Environment
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !FindInMap [EnvironmentMap, !Ref Environment, TableName]
+      Events:
+        UpdateItem:
+          Type: Api
+          Properties:
+            Path: /items/{id}
+            Method: put
+            RestApiId: !Ref CrudApi
+
+  # Delete Item Lambda Function
+  DeleteItemFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/delete/
+      Handler: app.lambda_handler
+      Runtime: python3.13
+      Environment:
+        Variables:
+          TABLE_NAME: !FindInMap [EnvironmentMap, !Ref Environment, TableName]
+          STAGE: !Ref Environment
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !FindInMap [EnvironmentMap, !Ref Environment, TableName]
+      Events:
+        DeleteItem:
+          Type: Api
+          Properties:
+            Path: /items/{id}
+            Method: delete
+            RestApiId: !Ref CrudApi
+
+  # API Gateway
+  CrudApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: !Ref Environment
+      Cors:
+        AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
+        AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+        AllowOrigin: "'*'"
+      GatewayResponses:
+        BAD_REQUEST_PARAMETERS:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+          ResponseTemplates:
+            application/json: '{"error": "Bad Request", "message": "Invalid request parameters"}'
+          StatusCode: 400
+        BAD_REQUEST_BODY:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+          ResponseTemplates:
+            application/json: '{"error": "Bad Request", "message": "Invalid request body"}'
+          StatusCode: 400
+        UNAUTHORIZED:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+          ResponseTemplates:
+            application/json: '{"error": "Unauthorized", "message": "Access denied"}'
+          StatusCode: 403
+        RESOURCE_NOT_FOUND:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+          ResponseTemplates:
+            application/json: '{"error": "Not Found", "message": "Resource not found"}'
+          StatusCode: 404
+        THROTTLED:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+          ResponseTemplates:
+            application/json: '{"error": "Too Many Requests", "message": "Request rate limit exceeded"}'
+          StatusCode: 429
+        DEFAULT_5XX:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+          ResponseTemplates:
+            application/json: '{"error": "Internal Server Error", "message": "An unexpected error occurred"}'
+          StatusCode: 500
+        DEFAULT_4XX:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+          ResponseTemplates:
+            application/json: '{"error": "Client Error", "message": "Bad request"}'
+          StatusCode: 400
+
+Outputs:
+  CrudApi:
+    Description: "API Gateway endpoint URL for CRUD operations"
+    Value: !Sub "https://${CrudApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/"
+  
+  ItemsTableName:
+    Description: "DynamoDB table name"
+    Value: !Ref ItemsTable
+
+  CreateItemFunctionArn:
+    Description: "Create Item Lambda Function ARN"
+    Value: !GetAtt CreateItemFunction.Arn
+
+  ReadItemsFunctionArn:
+    Description: "Read Items Lambda Function ARN"
+    Value: !GetAtt ReadItemsFunction.Arn
+
+  UpdateItemFunctionArn:
+    Description: "Update Item Lambda Function ARN"
+    Value: !GetAtt UpdateItemFunction.Arn
+
+  DeleteItemFunctionArn:
+    Description: "Delete Item Lambda Function ARN"
+    Value: !GetAtt DeleteItemFunction.Arn

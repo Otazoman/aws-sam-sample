@@ -1,0 +1,16 @@
+{
+    "httpMethod": "GET",
+    "path": "/items",
+    "headers": {
+        "Content-Type": "application/json"
+    },
+    "body": null,
+    "queryStringParameters": {
+        "limit": "10"
+    },
+    "pathParameters": null,
+    "requestContext": {
+        "httpMethod": "GET",
+        "path": "/items"
+    }
+}
